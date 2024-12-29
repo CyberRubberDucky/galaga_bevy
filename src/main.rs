@@ -1,4 +1,6 @@
-// --------> Imports <---------
+mod player_input;
+mod fly_logic;
+
 use bevy::{
     input::{keyboard::KeyboardInput, touch::TouchPhase},
     log::{Level, LogPlugin},
@@ -6,6 +8,8 @@ use bevy::{
     window::{MonitorSelection, WindowMode},
     winit::WinitSettings,
 };
+use player_input::handle_player_input;
+use fly_logic::spawn_fly;
 
 // --------> Color Palette <---------
 #[derive(Resource)]
@@ -27,7 +31,6 @@ fn create_color_palette() -> ColorsPalette {
 }
 
 // --------> Structs <---------
-
 #[derive(Debug, Clone, PartialEq)]
 enum EntityType {
     Player,
@@ -59,80 +62,6 @@ struct OutlineContainer {
 
 // --------> Functions <---------
 
-/// Handles player input (keyboard events)
-fn handle_player_input(
-    mut keyboard_input_events: EventReader<KeyboardInput>,
-    mut player_position: ResMut<PlayerPosition>,
-    mut query: Query<(&mut Transform, &GameEntity), With<GameEntity>>,
-    asset_server: Res<AssetServer>,
-    mut commands: Commands,
-    color_palette: Res<ColorsPalette>, // Use the palette here
-) {
-    let move_delta = 10.0; // --------> Player movement speed <---------
-    let mut move_offset = Vec3::ZERO;
-    let mut shoot = false;
-
-    for event in keyboard_input_events.read() {
-        if let key_code = event.key_code {
-            match key_code {
-                KeyCode::ArrowLeft => {
-                    move_offset += Vec3::new(-move_delta, 0.0, 0.0); // Move left
-                }
-                KeyCode::ArrowRight => {
-                    move_offset += Vec3::new(move_delta, 0.0, 0.0); // Move right
-                }
-                KeyCode::Space => {
-                    shoot = true;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    if move_offset != Vec3::ZERO {
-        player_position.0 += move_offset;
-
-        for (mut transform, game_entity) in query.iter_mut() {
-            if game_entity.entity_type == EntityType::Player {
-                transform.translation += move_offset;
-                println!("Player moved to position: {:?}", transform.translation);
-            }
-        }
-    }
-
-    if shoot {
-        println!("Player shoots!");
-        shoot_bullet(&mut commands, &player_position, &color_palette);
-        let shoot_sound = asset_server.load("sounds/shooting.ogg");
-        commands.spawn(AudioPlayer::new(shoot_sound));
-    }
-}
-
-/// Shoots a bullet from the player's position
-fn shoot_bullet(
-    commands: &mut Commands,
-    player_position: &ResMut<PlayerPosition>,
-    color_palette: &ColorsPalette,
-) {
-    let bullet_starting_position = player_position.0 + Vec3::new(0.0, 50.0, 0.0);
-
-    commands.spawn((
-        Bullet,
-        SpriteBundle {
-            transform: Transform {
-                translation: bullet_starting_position,
-                scale: Vec3::splat(10.0),
-                ..Default::default()
-            },
-            sprite: Sprite {
-                color: color_palette.bullet_color,
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    ));
-}
-
 /// Moves bullets and despawns them if they exit the screen
 fn move_bullets(
     mut bullet_query: Query<(&mut Transform, Entity), With<Bullet>>,
@@ -153,7 +82,6 @@ fn move_bullets(
 
 /// Detects collisions between bullets and other entities (like Fly or Player).
 /// Removes the bullet and the target (Fly or Player) if a collision is detected.
-/// Detects collisions between bullets and other entities and removes collided bullets and targets.
 fn collision(
     mut commands: Commands,
     bullet_query: Query<(Entity, &Transform), With<Bullet>>,
@@ -161,20 +89,18 @@ fn collision(
 ) {
     for (bullet_entity, bullet_transform) in bullet_query.iter() {
         for (target_entity, target_transform, target) in target_query.iter() {
-            // Check collision between bullet and target
             if is_colliding(&bullet_transform.translation, &target_transform.translation, 25.0) {
                 println!(
                     "Collision detected! Bullet at {:?} hit {:?} at {:?}",
                     bullet_transform.translation, target.entity_type, target_transform.translation
                 );
 
-                // Ensure bullet and target entities are marked for removal
                 commands.entity(bullet_entity).despawn(); // Remove the bullet
                 commands.entity(target_entity).despawn(); // Remove the target
 
                 println!("Removed bullet and target: {:?}", target.entity_type);
 
-                // Once a collision is handled, break to avoid processing this bullet further
+                // Break to avoid processing this bullet further
                 break;
             }
         }
@@ -193,16 +119,13 @@ fn despawn_out_of_bounds_entities(
     query: Query<(Entity, &Transform, Option<&OutlineContainer>)>,
 ) {
     for (entity, transform, outline_container) in query.iter() {
-        // Define container boundaries (adjust these if container dimensions change)
-        let container_width = 1200.0 / 2.0; // Half-width since position is relative to the center
-        let container_height = 800.0 / 2.0; // Half-height since position is relative to the center
+        let container_width = 1200.0 / 2.0;
+        let container_height = 800.0 / 2.0;
 
-        // Optional check for a specific container entity
         if outline_container.is_some() {
             continue; // Skip the container itself
         }
 
-        // Check if entity is outside the container boundaries
         let pos = transform.translation;
         if pos.x < -container_width
             || pos.x > container_width
@@ -224,7 +147,7 @@ fn setup_scene(mut commands: Commands, color_palette: Res<ColorsPalette>) {
 
     spawn_outline_container(
         &mut commands,
-        Vec3::new(0.0, 0.0, 0.0), // Positioned at origin (updated earlier)
+        Vec3::new(0.0, 0.0, 0.0),
         container_width,
         container_height,
     );
@@ -235,10 +158,11 @@ fn setup_scene(mut commands: Commands, color_palette: Res<ColorsPalette>) {
         EntityType::Player,
         &color_palette,
     );
-    add_game_entity(
+
+    // Spawn a fly using the new function
+    spawn_fly(
         &mut commands,
         Vec3::new(-300.0, 100.0, 0.0),
-        EntityType::Fly,
         &color_palette,
     );
 }
@@ -254,7 +178,7 @@ fn spawn_outline_container(commands: &mut Commands, position: Vec3, width: f32, 
                 ..Default::default()
             },
             sprite: Sprite {
-                color: Color::rgba(0.0, 0.0, 0.0, 0.2), // Semi-transparent container
+                color: Color::rgba(0.0, 0.0, 0.0, 0.2),
                 ..Default::default()
             },
             ..Default::default()
